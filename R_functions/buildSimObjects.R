@@ -27,8 +27,7 @@ buildSimObjects <- function(pars){
         }else if(d=="unif"){
           runif(1,p1,p2)
         }else if(d=="lognorm"){
-          if(p1>0){
-            p2 <- p1*0.1  #NOTE: HARD CODED IN THE ABSENCE OF DATA
+          if(p1>0 & p2>0){
             rlnorm(1,log(p1/sqrt(1+p2^2/p1^2)),sqrt(log(1+p2^2/p1^2)))
           }else{
             0
