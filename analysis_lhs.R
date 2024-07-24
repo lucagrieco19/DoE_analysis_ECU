@@ -1,12 +1,16 @@
+### The following code reproduces the "Latin Hypercube Sampling" analysis with
+### second-order meta-models described in the paper "Using design of experiments
+### with discrete event simulation in operational research: a review" by Gjerloev et al.
 
 
-rm(list=ls())
+### Initialisation ###############################################################
 
+# Uploading required R libraries
 library(xlsx)
 library(rsm)
 library(lhs)
 
-
+# Loading R functions implementing the DES model and I/O processing
 source("R_functions/readInput.R")
 source("R_functions/buildSimObjects.R")
 source("R_functions/runSim.R")
@@ -19,7 +23,7 @@ analysisID <- c("analysis_lhs")
 # Number of envisaged simulation runs
 n_runs <- 100
 
-# Time limit for simulation (it will stop at day 100)
+# Time limit for simulation (e.g. it will stop at day 100)
 until <- 100
 
 # Time range from which results are computed (earlier than that it is warm-up period)
@@ -30,10 +34,14 @@ to <- 40
 # Read default model parameters from files
 pars <- readInput(analysisID)
 
+# Variable keeping track of the total number of beds as in the analysis we keep this fixed
 tot_beds <- pars$capacity_info["ECU","beds"] + pars$capacity_info["ICU","beds"]
 
+# Multiplier used below to show results in hours (whereas input is in days)
+time_transformation <- 24
 
-##### LHS #################################################################
+
+### Setting LHS analysis parameters ######################################################
 
 min_alpha <- 0
 max_alpha <- 0.4
@@ -56,7 +64,7 @@ centre_arr_rate <- ( max_arr_rate + min_arr_rate ) / 2
 halfwd_arr_rate <- ( max_arr_rate - min_arr_rate ) / 2
 
 
-# Generate LHS with numbers from uniform distribution
+# Generating LHS with numbers from uniform distribution
 lhs <- randomLHS(81,4)
 
 basic_design <- data.frame(
@@ -69,8 +77,11 @@ rownames(basic_design) <- paste("comb",1:nrow(basic_design),sep='_')
 
 
 
+### Running simulations for LHS analysis ############################################
+
 simulation_results <- lapply(rownames(basic_design),function(s){
   
+  # Adapting model parameters to the current scenario
   mod_pars <- pars
   
   mod_pars$id <- s
@@ -97,27 +108,28 @@ simulation_results <- lapply(rownames(basic_design),function(s){
     mod_pars$trajectory_info[[t]]$groupA[pars$trajectory_info[[t]]$Area=="ICU"] <- paste("lognorm",icu_stay*(1-prop*sum(pars$trajectory_info[[t]]$Area=="ECU")),sep=',')
   }
   
-  # Set up simulation environment
+  # Setting up simulation environment
   sim_obj <- buildSimObjects(mod_pars)
   
-  # Run simulation
+  # Running simulation
   sim_res <- runSim(sim_obj,mod_pars,n_runs,until)
   
-  # Create output data
-  #simulation_results[[s]] <- printOutput(analysisID,sim_res,from,to,mod_pars)
+  # Creating output data
   printOutput(analysisID,sim_res,from,to,mod_pars,save_summary=FALSE)
-  
-  #iter <- iter - 1
-  #print(paste(iter," to go",sep=''))
   
 })
 names(simulation_results) <- rownames(basic_design)
 
+# Saving raw simulation results
 saveRDS(simulation_results,file=paste("data/",analysisID,"/output/simulation_results_lhs.rds",sep=''))
 
-simulation_results <- readRDS(paste("data/",analysisID,"/output/simulation_results_lhs.rds",sep=''))
+# Uploading raw simulation results - if needed, to avoid recomputing them
+#simulation_results <- readRDS(paste("data/",analysisID,"/output/simulation_results_lhs.rds",sep=''))
 
 
+### Fitting the simulation data with meta-models #################################
+
+# Organising simulation results into a design table used for model fitting
 
 full_design<-Reduce("rbind.data.frame",lapply(simulation_results,function(r){
   tmp <- na.omit(data.frame(
@@ -126,9 +138,9 @@ full_design<-Reduce("rbind.data.frame",lapply(simulation_results,function(r){
     r$pars$beta,
     r$pars$arr_rate,
     Reduce("cbind",list(
-      r$waiting_time_by_area$ECU * 24,
-      r$waiting_time_by_area$ICU * 24,
-      r$overall_waiting_time * 24,
+      r$waiting_time_by_area$ECU * time_transformation, 
+      r$waiting_time_by_area$ICU * time_transformation,
+      r$overall_waiting_time * time_transformation,
       r$bed_utilisation_by_area$ECU,
       r$bed_utilisation_by_area$ICU,
       r$overall_bed_utilisation,
@@ -151,7 +163,8 @@ coded_design <- coded.data(
 
 
 
-#Second-order meta-models
+## Fitting simulation data with second-order meta-models #####################
+
 wait_ECU <- rsm(wait_ECU ~ SO(x1,x2,x3,x4), data = coded_design)
 sink(paste("data/",analysisID,"/output/wait_ECU_SO_summary.txt",sep=''))
 print(summary(wait_ECU))
@@ -239,7 +252,7 @@ dev.off()
 
 
 
-
+# Applying fitted second-order meta-models to arbitrarily chosen scenarios
 
 alpha_test <- c(0,0.15,0.3)
 ecu_beds_test <- pars$capacity_info["ECU","beds"] + seq(-4,4,1)
@@ -261,6 +274,10 @@ wait_model <- lapply(alpha_test,function(a){
 })
 names(wait_model) <- alpha_test
 
+
+
+# Plotting heatmaps of the above model predictions
+
 lev_wait <- c(0,0.5,1,1.5,2,2.5,3,6,12,24,36,48,60,72,1000)
 col_wait <- c(colorRampPalette(c("#32CD32", "#A3A3A3"))(length(lev_wait)))
 for(i in names(wait_model)){
@@ -273,22 +290,4 @@ for(i in names(wait_model)){
   dev.off()
 }
 
-
-
-
-
-df <- data.frame(x=c(40,20),y=c(6,8),z=c(0,0))
-
-
-library(plotly)
-fig <- plot_ly(z = ~wait_model[[1]])
-fig <- fig %>% add_surface()
-fig <- fig %>% add_trace(
-               data=df,
-               x=df$x,
-               y=df$y,
-               z=df$z,
-               type="scatter3d",
-               mode="markers")
-fig
 

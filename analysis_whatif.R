@@ -1,12 +1,17 @@
+### The following code reproduces the "What-if" analysis described in the paper
+### "Using design of experiments with discrete event simulation in operational
+### research: a review" by Gjerloev et al.
 
 
-rm(list=ls())
+### Initialisation ###############################################################
 
+
+# Uploading required R libraries
 library(xlsx)
 library(rsm)
 library(lhs)
 
-
+# Loading R functions implementing the DES model and I/O processing
 source("R_functions/readInput.R")
 source("R_functions/buildSimObjects.R")
 source("R_functions/runSim.R")
@@ -19,20 +24,24 @@ analysisID <- c("analysis_whatif")
 # Number of envisaged simulation runs
 n_runs <- 100
 
-# Time limit for simulation (it will stop at day 100)
+# Time limit for simulation (e.g. it will stop at day 100)
 until <- 100
 
 # Time range from which results are computed (earlier than that it is warm-up period)
 from <- 10
 to <- 40
 
-
 # Read default model parameters from files
 pars <- readInput(analysisID)
 
+# Variable keeping track of the total number of beds as in the analysis we keep this fixed
 tot_beds <- pars$capacity_info["ECU","beds"] + pars$capacity_info["ICU","beds"]
 
-# What-if analysis parameters
+# Multiplier used below to show results in hours (whereas input is in days)
+time_transformation <- 24
+
+
+### Setting what-if analysis parameters ##############################################
 alpha_values <- seq(0,0.4,0.05)
 ecu_beds_values <- pars$capacity_info["ECU","beds"] + seq(-4,4,1)
 basic_design <- data.frame(
@@ -42,10 +51,12 @@ basic_design <- data.frame(
 rownames(basic_design) <- paste("scen",basic_design$alpha,basic_design$ecu_beds,sep='_')
 
 
-### Run what-if analysis ##########################
+
+### Running simulations for What-if analysis ##########################################
 
 simulation_results <- lapply(rownames(basic_design),function(s){
   
+  # Adapting model parameters to the current scenario
   mod_pars <- pars
   
   mod_pars$id <- s
@@ -61,34 +72,29 @@ simulation_results <- lapply(rownames(basic_design),function(s){
   mod_pars$capacity_info["ECU","beds"] <- mod_pars$ecu_beds
   mod_pars$capacity_info["ICU","beds"] <- tot_beds - mod_pars$ecu_beds
   
-  # Set up simulation environment
+  # Seting up simulation environment
   sim_obj <- buildSimObjects(mod_pars)
   
-  # Run simulation
+  # Running simulation
   sim_res <- runSim(sim_obj,mod_pars,n_runs,until)
   
-  # Create output data
-  #simulation_results[[s]] <- printOutput(analysisID,sim_res,from,to,mod_pars)
+  # Creating output data
   printOutput(analysisID,sim_res,from,to,mod_pars,save_summary=FALSE)
-  
-  #iter <- iter - 1
-  #print(paste(iter," to go",sep=''))
   
 })
 names(simulation_results) <- rownames(basic_design)
 
-
-###################################################
-
+# Saving raw simulation results
 saveRDS(simulation_results,file=paste("data/",analysisID,"/output/simulation_results_whatif.rds",sep=''))
 
-simulation_results <- readRDS(paste("data/",analysisID,"/output/simulation_results_whatif.rds",sep=''))
+# Uploading raw simulation results - if needed, to avoid recomputing them
+#simulation_results <- readRDS(paste("data/",analysisID,"/output/simulation_results_whatif.rds",sep=''))
 
 
 
-#### What-if analysis ######################################
+### Extracting What-if analysis summaries ######################################
 
-## Build result table containing numbers for what-if analysis
+# Building result tables containing summaries from simulation runs
 
 summ <- vector('list',length=0)
 
@@ -129,18 +135,24 @@ for(av in rownames(tmp)){
 }
 summ[["overall_bed_utilisation"]] <- tmp
 
-
 summ[["total_bed_costs"]] <- summ$total_bed_costs_ICU + summ$total_bed_costs_ECU
 
-summ[["overall_waiting_time"]] <- summ[["overall_waiting_time"]] * 24
-summ[["waiting_time_by_area_ECU"]] <- summ[["waiting_time_by_area_ECU"]] * 24
-summ[["waiting_time_by_area_ICU"]] <- summ[["waiting_time_by_area_ICU"]] * 24
+summ[["overall_waiting_time"]] <- summ[["overall_waiting_time"]] * time_transformation
+summ[["waiting_time_by_area_ECU"]] <- summ[["waiting_time_by_area_ECU"]] * time_transformation
+summ[["waiting_time_by_area_ICU"]] <- summ[["waiting_time_by_area_ICU"]] * time_transformation
 
+
+
+# Creating a spreadsheet containing output summaries from simulations
 
 write.xlsx(summ[[1]],file=paste("data/",analysisID,"/output/summ_whatif.xlsx",sep=''),sheetName=names(summ)[1],append=FALSE)
 for(i in 2:length(summ)){
   write.xlsx(summ[[i]],file=paste("data/",analysisID,"/output/summ_whatif.xlsx",sep=''),sheetName=names(summ)[i],append=TRUE)
 }
+
+
+
+# Plotting heatmaps for the output metrics defined above
 
 lev_wait <- c(0,0.5,1,1.5,2,2.5,3,6,12,24,36,48,60,72,1000)
 col_wait <- c(colorRampPalette(c("#32CD32", "#A3A3A3"))(length(lev_wait)))
